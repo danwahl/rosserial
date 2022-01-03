@@ -36,7 +36,7 @@
 __author__ = "mferguson@willowgarage.com (Michael Ferguson)"
 
 import rospy
-from rosserial_python import SerialClient, RosSerialServer
+from rosserial_python import SerialClient, RosSerialServer, RosUdpServer
 from serial import SerialException
 from time import sleep
 import multiprocessing
@@ -55,16 +55,20 @@ if __name__=="__main__":
     fix_pyserial_for_test = rospy.get_param('~fix_pyserial_for_test', False)
 
     # Allows for assigning local parameters for tcp_port and fork_server with
-    # global parameters as fallback to prevent breaking changes 
+    # global parameters as fallback to prevent breaking changes
     if(rospy.has_param('~tcp_port')):
         tcp_portnum = int(rospy.get_param('~tcp_port'))
     else:
         tcp_portnum = int(rospy.get_param('/rosserial_embeddedlinux/tcp_port', '11411'))
-    
+
     if(rospy.has_param('~fork_server')):
         fork_server = rospy.get_param('~fork_server')
     else:
         fork_server = rospy.get_param('/rosserial_embeddedlinux/fork_server', False)
+
+    udp_server_port = int(rospy.get_param('~udp_server_port', '11411'))
+    udp_client_port = int(rospy.get_param('~udp_client_port', '11411'))
+    udp_client_addr = rospy.get_param('~udp_client_addr', '127.0.0.1')
 
     # TODO: do we really want command line params in addition to parameter server params?
     sys.argv = rospy.myargv(argv=sys.argv)
@@ -86,6 +90,16 @@ if __name__=="__main__":
                 rospy.loginfo("Shutting down process %r", process)
                 process.terminate()
                 process.join()
+            rospy.loginfo("All done")
+
+    elif port_name == "udp":
+        server = RosUdpServer(udp_server_port, udp_client_port, udp_client_addr)
+        rospy.loginfo("Opened UDP Port %d, sending to %s:%d" % (udp_server_port, udp_client_addr, udp_client_port))
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            rospy.loginfo("got keyboard interrupt")
+        finally:
             rospy.loginfo("All done")
 
     else :          # Use serial port

@@ -316,6 +316,85 @@ class RosSerialServer:
         except BlockingIOError:
             return 0
 
+class RosUdpServer:
+    def __init__(self, server_port, client_port, client_addr):
+        self.server_address = ("", server_port)
+        self.client_address = (client_addr, client_port)
+
+        self.read_data = bytearray()
+
+    def run(self):
+        self.serversocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.serversocket.bind(self.server_address)
+        self.serversocket.settimeout(0.0)
+
+        self.isConnected = True
+
+        rospy.loginfo("calling startSerialClient")
+        self.startSerialClient()
+        rospy.loginfo("startSerialClient() exited")
+
+    def startSerialClient(self):
+        client = SerialClient(self, timeout=1)
+        try:
+            client.run()
+        except KeyboardInterrupt:
+            pass
+        except RuntimeError:
+            rospy.loginfo("RuntimeError exception caught")
+            self.isConnected = False
+        except socket.error:
+            rospy.loginfo("socket.error exception caught")
+            self.isConnected = False
+        finally:
+            rospy.loginfo("Client has exited, closing socket.")
+            self.serversocket.close()
+            for sub in client.subscribers.values():
+                sub.unregister()
+            for srv in client.services.values():
+                srv.unregister()
+
+    def flushInput(self):
+        del self.read_data[:]
+
+    def flushOutput(self):
+        pass
+
+    def write(self, data):
+        if not self.isConnected:
+            return
+        length = len(data)
+        totalsent = 0
+
+        while totalsent < length:
+            try:
+                totalsent += self.serversocket.sendto(data[totalsent:], self.client_address)
+            except BrokenPipeError:
+                rospy.logerror("RosUdpServer.write() socket connection broken")
+
+    def read(self, rqsted_length):
+        if not self.isConnected:
+            return b''
+        elif len(self.read_data) < rqsted_length:
+            self._read()
+
+        msg = self.read_data[:rqsted_length]
+        del self.read_data[:rqsted_length]
+        return msg
+
+    def inWaiting(self):
+        if len(self.read_data) == 0:
+            try:
+                self._read(socket.MSG_DONTWAIT)
+            except BlockingIOError:
+                pass
+        return len(self.read_data)
+
+    def _read(self, flags=0):
+            msg, address = self.serversocket.recvfrom(65535, flags)
+            if address == self.client_address:
+                self.read_data.extend(msg)
+
 class SerialClient(object):
     """
         ServiceServer responds to requests from the serial device.
@@ -349,12 +428,12 @@ class SerialClient(object):
         self.publishers = dict()  # id:Publishers
         self.subscribers = dict() # topic:Subscriber
         self.services = dict()    # topic:Service
-        
+
         def shutdown():
             self.txStopRequest()
             rospy.loginfo('shutdown hook activated')
         rospy.on_shutdown(shutdown)
-        
+
         self.pub_diagnostics = rospy.Publisher('/diagnostics', diagnostic_msgs.msg.DiagnosticArray, queue_size=10)
 
         if port is None:
